@@ -24,34 +24,35 @@ def process_weather_data(data):
     }
 
 def monitor_weather():
-    daily_summaries = {}
     try:
         while True:
+            # Create a dictionary to store city-wise summaries
+            city_summaries = {}
             for city in CITIES:
                 data = get_weather_data(city)
-                processed_data = process_weather_data(data)
+                if 'main' in data and 'weather' in data:
+                    processed_data = process_weather_data(data)
 
-                date = processed_data['date']
-                if date not in daily_summaries:
-                    daily_summaries[date] = {
-                        "temp_sum": 0, 
-                        "count": 0, 
-                        "max_temp": float('-inf'), 
-                        "min_temp": float('inf'), 
-                        "conditions": []
+                    # Store data for the city
+                    city_summaries[city] = {
+                        "temp": processed_data['temp'],
+                        "condition": processed_data['condition'],
+                        "date": processed_data['date']
                     }
+                else:
+                    print(f"Error retrieving data for {city}: {data.get('message', 'Unknown error')}")
 
-                daily_summaries[date]['temp_sum'] += processed_data['temp']
-                daily_summaries[date]['count'] += 1
-                daily_summaries[date]['max_temp'] = max(daily_summaries[date]['max_temp'], processed_data['temp'])
-                daily_summaries[date]['min_temp'] = min(daily_summaries[date]['min_temp'], processed_data['temp'])
-                daily_summaries[date]['conditions'].append(processed_data['condition'])
+            # Calculate average, max, and min temperatures
+            avg_temp = sum(summary["temp"] for summary in city_summaries.values()) / len(city_summaries)
+            max_temp = max(summary["temp"] for summary in city_summaries.values())
+            min_temp = min(summary["temp"] for summary in city_summaries.values())
 
-            for date, summary in daily_summaries.items():
-                avg_temp = summary['temp_sum'] / summary['count']
-                dominant_condition = max(set(summary['conditions']), key=summary['conditions'].count)
-                print(f"Date: {date}, Avg Temp: {avg_temp:.2f}°C, Max Temp: {summary['max_temp']:.2f}°C, Min Temp: {summary['min_temp']:.2f}°C, Dominant Condition: {dominant_condition}")
+            # Print weather data for each city
+            for city, summary in city_summaries.items():
+                print(f"City: {city}, Temp: {summary['temp']:.2f}°C, Condition: {summary['condition']}, Date: {summary['date']}")
 
+            # Print overall summary
+            print(f"Average Temp: {avg_temp:.2f}°C, Max Temp: {max_temp:.2f}°C, Min Temp: {min_temp:.2f}°C")
             print("Waiting for the next update...")
             time.sleep(300)  # Wait for 5 minutes before fetching the data again
     except KeyboardInterrupt:
