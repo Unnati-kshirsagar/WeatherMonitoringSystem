@@ -1,10 +1,22 @@
 from datetime import datetime
 import requests
 import time
+import json
+import sqlite3
 
-API_KEY = "03a6053cd33635e18289f62432c1f06a"  # Your OpenWeatherMap API key
+# Load configuration from config.json
+with open('config.json') as config_file:
+    config = json.load(config_file)
+
+API_KEY = config["api_key"]  # Your OpenWeatherMap API key
+CITIES = config["cities"]  # List of cities to monitor
 BASE_URL = "http://api.openweathermap.org/data/2.5/weather?"
-CITIES = ["Delhi", "Mumbai", "Chennai", "Bangalore", "Kolkata", "Hyderabad"]
+
+# Database setup
+conn = sqlite3.connect('weather_data.db')
+cursor = conn.cursor()
+cursor.execute('''CREATE TABLE IF NOT EXISTS daily_summaries
+                  (date TEXT, avg_temp REAL, max_temp REAL, min_temp REAL, condition TEXT)''')
 
 def get_weather_data(city):
     complete_url = f"{BASE_URL}q={city}&appid={API_KEY}"
@@ -13,50 +25,62 @@ def get_weather_data(city):
 
 def process_weather_data(data):
     temp = data['main']['temp'] - 273.15  # Convert to Celsius
-    feels_like = data['main']['feels_like'] - 273.15
     condition = data['weather'][0]['main']
     dt = datetime.fromtimestamp(data['dt']).date()
     return {
         "temp": temp,
-        "feels_like": feels_like,
         "condition": condition,
-        "date": dt
+        "date": str(dt)
     }
 
 def monitor_weather():
+    daily_summaries = {}
+    alert_threshold = 35  # Example threshold
     try:
         while True:
-            # Create a dictionary to store city-wise summaries
-            city_summaries = {}
             for city in CITIES:
                 data = get_weather_data(city)
-                if 'main' in data and 'weather' in data:
-                    processed_data = process_weather_data(data)
+                processed_data = process_weather_data(data)
 
-                    # Store data for the city
-                    city_summaries[city] = {
-                        "temp": processed_data['temp'],
-                        "condition": processed_data['condition'],
-                        "date": processed_data['date']
+                date = processed_data['date']
+                if date not in daily_summaries:
+                    daily_summaries[date] = {
+                        "temp_sum": 0, 
+                        "count": 0, 
+                        "max_temp": float('-inf'), 
+                        "min_temp": float('inf'), 
+                        "conditions": []
                     }
-                else:
-                    print(f"Error retrieving data for {city}: {data.get('message', 'Unknown error')}")
 
-            # Calculate average, max, and min temperatures
-            avg_temp = sum(summary["temp"] for summary in city_summaries.values()) / len(city_summaries)
-            max_temp = max(summary["temp"] for summary in city_summaries.values())
-            min_temp = min(summary["temp"] for summary in city_summaries.values())
+                daily_summaries[date]['temp_sum'] += processed_data['temp']
+                daily_summaries[date]['count'] += 1
+                daily_summaries[date]['max_temp'] = max(daily_summaries[date]['max_temp'], processed_data['temp'])
+                daily_summaries[date]['min_temp'] = min(daily_summaries[date]['min_temp'], processed_data['temp'])
+                daily_summaries[date]['conditions'].append(processed_data['condition'])
 
-            # Print weather data for each city
-            for city, summary in city_summaries.items():
-                print(f"City: {city}, Temp: {summary['temp']:.2f}°C, Condition: {summary['condition']}, Date: {summary['date']}")
+                # Check for alerts
+                if processed_data['temp'] > alert_threshold:
+                    print(f"Alert! {city} has exceeded the threshold with a temperature of {processed_data['temp']:.2f}°C.")
 
-            # Print overall summary
-            print(f"Average Temp: {avg_temp:.2f}°C, Max Temp: {max_temp:.2f}°C, Min Temp: {min_temp:.2f}°C")
+                # Display temperature for each city
+                print(f"City: {city}, Temp: {processed_data['temp']:.2f}°C, Condition: {processed_data['condition']}")
+
+            # Store daily summaries
+            for date, summary in daily_summaries.items():
+                avg_temp = summary['temp_sum'] / summary['count']
+                dominant_condition = max(set(summary['conditions']), key=summary['conditions'].count)
+                cursor.execute("INSERT INTO daily_summaries (date, avg_temp, max_temp, min_temp, condition) VALUES (?, ?, ?, ?, ?)",
+                               (date, avg_temp, summary['max_temp'], summary['min_temp'], dominant_condition))
+                conn.commit()
+
+                print(f"Date: {date}, Avg Temp: {avg_temp:.2f}°C, Max Temp: {summary['max_temp']:.2f}°C, Min Temp: {summary['min_temp']:.2f}°C, Dominant Condition: {dominant_condition}")
+
             print("Waiting for the next update...")
-            time.sleep(300)  # Wait for 5 minutes before fetching the data again
+            time.sleep(300)  # Wait for 5 minutes
     except KeyboardInterrupt:
         print("Weather monitoring stopped by user.")
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     monitor_weather()
